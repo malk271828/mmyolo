@@ -313,7 +313,11 @@ custom_hooks = [
     dict(
         type='mmdet.PipelineSwitchHook',
         switch_epoch=max_epochs - close_mosaic_epochs,
-        switch_pipeline=train_pipeline_stage2)
+        switch_pipeline=train_pipeline_stage2),
+    dict(
+        type='EnsembleHook',
+        json_file='bbox_result.json',
+    )
 ]
 
 val_evaluator = dict(
