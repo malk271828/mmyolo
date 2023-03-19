@@ -175,13 +175,12 @@ class EnsembleHook(Hook):
             print(f"output to file: {file_path}")
 
         # Construct list of results from all the models
+        # https://github.com/openvinotoolkit/anomalib/blob/main/src/anomalib/deploy/inferencers/base_inferencer.py#L87
         result_all_models = defaultdict(list)
         bboxes = outputs[0].pred_instances.bboxes
         result_all_models["bboxes"].append(outputs[0].pred_instances.bboxes.cpu())
         result_all_models["scores"].append(outputs[0].pred_instances.scores.cpu())
         result_all_models["labels"].append(outputs[0].pred_instances.labels.cpu())
-        # TODO:
-        # https://github.com/openvinotoolkit/anomalib/blob/main/src/anomalib/deploy/inferencers/base_inferencer.py#L87
         if predictions.pred_boxes is not None:
             num_sample = len(predictions.pred_boxes)
             result_all_models["bboxes"].append(predictions.pred_boxes)
@@ -196,11 +195,15 @@ class EnsembleHook(Hook):
         bboxes, scores, labels = self.apply_wbf(result_all_models,
             ori_shape=outputs[0].metainfo["ori_shape"], verbose = 2)
 
-        # assign fusion results to the passed mutable object
-        # https://github.com/open-mmlab/mmengine/blob/main/docs/zh_cn/advanced_tutorials/data_element.md
+        # Assign fusion results to the mutable outputs list that was passed.
+        # In the original implementation, changes to the output list have no effect as after_test_iter is
+        # called after the evaluation process. Therefore, we swapped the order of the evaluation process 
+        # and calling of the hook in loops.py on the MMEngine module.
+        # https://mmengine.readthedocs.io/en/latest/design/hook.html#design-on-mmengine
+        # https://github.com/open-mmlab/mmengine/blob/main/mmengine/runner/loops.py#L455
         del outputs[0].pred_instances.bboxes
         del outputs[0].pred_instances.scores
         del outputs[0].pred_instances.labels
-        outputs[0].pred_instances.bboxes = torch.Tensor(bboxes)
-        outputs[0].pred_instances.scores= torch.Tensor(scores)
-        outputs[0].pred_instances.labels = torch.Tensor(labels)
+        outputs[0].pred_instances.bboxes = torch.Tensor(bboxes).to(device=get_device())
+        outputs[0].pred_instances.scores= torch.Tensor(scores).to(device=get_device())
+        outputs[0].pred_instances.labels = torch.Tensor(labels).to(device=get_device()).type(torch.int64)
