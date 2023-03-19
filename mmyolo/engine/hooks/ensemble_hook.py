@@ -68,7 +68,11 @@ class EnsembleHook(Hook):
         self.inferencer = TorchInferencer(
             config=anomalib_config_file,
             model_source=anomalib_weight_file, device=get_device())
-        # self.visualizer = Visualizer(mode="full", task="segmentation")
+
+        # file output for visualization
+        self.writeToFile = False
+        self.visualizer = Visualizer(mode="simple", task="detection")
+        self.output_dir = "output/"
 
     def apply_wbf(self,
                   result_all_models: Dict,
@@ -110,7 +114,9 @@ class EnsembleHook(Hook):
         """
         if verbose > 0:
             print("[pink]apply_wbf() begin -------------------------[/pink]")
-            print(result_all_models.keys())
+            if verbose > 1:
+                for i in range(len(result_all_models['bboxes'])):
+                    print(f"number of boxes{i}: {len(result_all_models['bboxes'][i])}")
 
         if ori_shape:
             ori_shape_array = np.array(ori_shape[::-1] * 2)
@@ -123,8 +129,9 @@ class EnsembleHook(Hook):
         assert len(result_all_models['bboxes']) == len(result_all_models['scores']) == \
             len(result_all_models['labels']), "The length of 'bboxes', 'scores', and 'labels' must be the same"
 
-        # relative cordinate value
-        result_all_models['bboxes'][0] = result_all_models['bboxes'][0] / ori_shape_array
+        # Converting from an absolute coordinate system to a relative coordinate system
+        for i in range(len(result_all_models['bboxes'])):
+            result_all_models['bboxes'][i] = result_all_models['bboxes'][i] / ori_shape_array
 
         bboxes, scores, labels = weighted_boxes_fusion(
             boxes_list=result_all_models['bboxes'],
@@ -133,7 +140,8 @@ class EnsembleHook(Hook):
             weights=None, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
 
         if verbose > 0:
-            print(labels)
+            if verbose > 1:
+                print(f"number of boxes: {len(labels)}")
             print("[pink]apply_wbf() end -------------------------[/pink]")
 
         return bboxes, scores, labels
@@ -160,6 +168,11 @@ class EnsembleHook(Hook):
         filename = data_batch["data_samples"][0].metainfo["img_path"]
         image = read_image(filename)
         predictions = self.inferencer.predict(image=image)
+        if self.writeToFile:
+            output = self.visualizer.visualize_image(predictions)
+            file_path = generate_output_image_filename(input_path=filename, output_path=self.output_dir)
+            self.visualizer.save(file_path=file_path, image=output)
+            print(f"output to file: {file_path}")
 
         # Construct list of results from all the models
         result_all_models = defaultdict(list)
@@ -167,12 +180,13 @@ class EnsembleHook(Hook):
         result_all_models["bboxes"].append(outputs[0].pred_instances.bboxes.cpu())
         result_all_models["scores"].append(outputs[0].pred_instances.scores.cpu())
         result_all_models["labels"].append(outputs[0].pred_instances.labels.cpu())
-        # TODO : 
+        # TODO:
         # https://github.com/openvinotoolkit/anomalib/blob/main/src/anomalib/deploy/inferencers/base_inferencer.py#L87
-        if predictions.pred_boxes:
+        if predictions.pred_boxes is not None:
+            num_sample = len(predictions.pred_boxes)
             result_all_models["bboxes"].append(predictions.pred_boxes)
-            result_all_models["scores"].append(predictions.pred_score)
-            result_all_models["labels"].append(predictions.pred_label)
+            result_all_models["scores"].append([predictions.pred_score] * num_sample)
+            result_all_models["labels"].append([0] * num_sample)
         else:
             result_all_models["bboxes"].append([0])
             result_all_models["scores"].append([0])
@@ -180,7 +194,7 @@ class EnsembleHook(Hook):
 
         # Apply weighted boxes fusion
         bboxes, scores, labels = self.apply_wbf(result_all_models,
-            ori_shape=outputs[0].metainfo["ori_shape"], verbose = 0)
+            ori_shape=outputs[0].metainfo["ori_shape"], verbose = 2)
 
         # assign fusion results to the passed mutable object
         # https://github.com/open-mmlab/mmengine/blob/main/docs/zh_cn/advanced_tutorials/data_element.md
